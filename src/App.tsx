@@ -12,6 +12,7 @@ import { MENU_ITEMS, CATEGORIES, CATEGORY_IMAGES, MENU_HERO_IMAGE, ABOUT_HERO_IM
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as htmlToImage from 'html-to-image';
+import html2canvas from 'html2canvas';
 import { auth, onAuthStateChanged, signOut, User, db } from './firebase';
 import LoginPage from './LoginPage';
 import AdminSetup from './AdminSetup';
@@ -20,7 +21,8 @@ import { saveOrder } from './services/orderService';
 import { collection, query, orderBy, getDocs, deleteDoc, doc, updateDoc, Timestamp, addDoc, onSnapshot, limit } from 'firebase/firestore';
 
 // --- Constants ---
-const ADMIN_EMAIL = "admin@restaurant.com";
+const ADMIN_EMAIL = "armyprince7@gmail.com";
+const RESTAURANT_PHONE = "966549569350";
 
 // --- Context ---
 const AuthContext = createContext<{
@@ -2152,11 +2154,11 @@ const InvoiceContent = ({ order, lang, id }: { order: Order; lang: Language; id?
         
         <div className="mt-8 flex justify-between items-end border-t border-[#E89B2F]/20 pt-6">
           <div className="text-left">
-            <p className="text-[9px] text-[#E89B2F] font-bold uppercase mb-1">Invoice No / رقم الفاتورة</p>
+            <p className="text-[9px] text-[#E89B2F] font-bold uppercase mb-1">INVOICE NO / رقم الفاتورة</p>
             <p className="text-xs font-bold text-[#FAF3E0] tracking-wider">{order.orderId || order.id}</p>
           </div>
           <div className="text-right">
-            <p className="text-[9px] text-[#E89B2F] font-bold uppercase mb-1">Date / التاريخ</p>
+            <p className="text-[9px] text-[#E89B2F] font-bold uppercase mb-1">DATE / التاريخ</p>
             <p className="text-xs font-bold text-[#FAF3E0]">
               {new Date(order.date).toLocaleString(lang === 'ar' ? 'ar-SA' : 'en-US', {
                 year: 'numeric', month: 'long', day: 'numeric',
@@ -2170,7 +2172,7 @@ const InvoiceContent = ({ order, lang, id }: { order: Order; lang: Language; id?
 
       {/* Customer Info */}
       <div className="bg-white px-8 py-4 border-b border-[#E89B2F]/10">
-        <p className="text-[8px] text-[#6B6560] font-bold uppercase mb-1">Customer / اسم العميل</p>
+        <p className="text-[8px] text-[#6B6560] font-bold uppercase mb-1">CUSTOMER / اسم العميل</p>
         <p className="text-sm font-bold text-[#1A1A1A]">{order.customerName}</p>
       </div>
 
@@ -2210,22 +2212,22 @@ const InvoiceContent = ({ order, lang, id }: { order: Order; lang: Language; id?
       {/* Summary & Grand Total */}
       <div className="bg-[#FAF3E0] p-4 px-8 border-b border-[#E89B2F]/10 flex justify-between items-center">
         <div className="text-[10px] text-[#6B6560] font-bold uppercase tracking-widest">
-          {order.items.length} Items / {totalItems} Pieces
+          {order.items.length} ITEMS / {totalItems} PIECES
         </div>
         <div className="font-arabic font-bold text-[#1A1A1A]">
           المجموع: <span className="text-[#C87800]">{order.total} ر.س</span>
         </div>
       </div>
 
-      <div className="bg-[#7A1B1B] m-4 rounded-2xl p-6 flex justify-between items-center shadow-lg">
-        <div className="text-right">
-          <div className="text-[10px] text-[#E89B2F] font-bold uppercase tracking-[0.2em] mb-1">Grand Total / الإجمالي الكلي</div>
-          <div className="text-2xl font-serif text-[#FAF3E0] tracking-tighter">
-            {order.total} <span className="text-xs font-sans font-bold text-[#E89B2F] uppercase">SAR</span>
+      <div className="bg-[#7A1B1B] m-4 rounded-2xl p-6 flex justify-between items-center shadow-lg relative overflow-hidden">
+        <div className="text-left">
+          <div className="text-[10px] text-[#E89B2F] font-bold uppercase tracking-[0.2em] mb-1">GRAND TOTAL / الإجمالي الكلي</div>
+          <div className="text-3xl font-serif text-[#FAF3E0] tracking-tighter">
+            {order.total} <span className="text-xs font-sans font-bold text-[#E89B2F] uppercase ml-1">SAR</span>
           </div>
         </div>
-        <div className="w-12 h-12 bg-[#E89B2F]/10 rounded-xl flex items-center justify-center border border-[#E89B2F]/20">
-          <ShoppingCart className="text-[#E89B2F]" size={24} />
+        <div className="w-14 h-14 bg-[#E89B2F]/10 rounded-full flex items-center justify-center border border-[#E89B2F]/20">
+          <ShoppingCart className="text-[#E89B2F]" size={28} />
         </div>
       </div>
 
@@ -2308,30 +2310,38 @@ const OrderSuccessModal = ({ order, onClose }: { order: Order | null; onClose: (
   const { language: lang } = useLanguage();
   const [shareFile, setShareFile] = useState<File | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
 
-  // Pre-generate the invoice image as soon as the modal opens for instant sharing
+  // Pre-generate the invoice image immediately for instant sharing
   useEffect(() => {
     if (order) {
-      const timer = setTimeout(async () => {
+      const generateImage = async () => {
+        setIsGenerating(true);
         const element = document.getElementById('invoice-capture-area');
         if (element) {
           try {
+            // html-to-image is often faster and more reliable for simple DOM structures
             const blob = await htmlToImage.toBlob(element, {
               backgroundColor: '#FAF3E0',
-              width: 500,
-              height: element.offsetHeight,
               pixelRatio: 2,
               cacheBust: true,
             });
+            
             if (blob) {
-              const file = new File([blob], `mud-invoice-${order.orderId || order.id}.png`, { type: 'image/png' });
+              const file = new File([blob], `invoice-${order.orderId || order.id}.png`, { type: 'image/png' });
               setShareFile(file);
             }
           } catch (err) {
-            console.error('Pre-generation error:', err);
+            console.error('Image generation error:', err);
+          } finally {
+            setIsGenerating(false);
           }
+        } else {
+          setIsGenerating(false);
         }
-      }, 300); // Small delay to ensure the hidden area is rendered
+      };
+      
+      const timer = setTimeout(generateImage, 500);
       return () => clearTimeout(timer);
     }
   }, [order]);
@@ -2339,11 +2349,11 @@ const OrderSuccessModal = ({ order, onClose }: { order: Order | null; onClose: (
   const handleWhatsAppShare = async () => {
     if (!order) return;
 
-    const itemsText = order.items.map(item => `• ${item.name.ar} (${item.name.en}) x${item.quantity}`).join('\n');
-    const msg = `مرحباً! إليك فاتورتك من مطعم مُد 🧾\n\nرقم الطلب: ${order.orderId || order.id}\n\nالأصناف:\n${itemsText}\n\nالمجموع: ${order.total} SAR`;
+    const msg = `مرحباً! إليك فاتورتك من مطعم مُد 🧾\nرقم الطلب: ${order.orderId || order.id}\nالمجموع: SAR ${order.total}`;
 
-    // If file is already pre-generated, share it immediately
-    if (shareFile && navigator.canShare && navigator.canShare({ files: [shareFile] })) {
+    // 1. Try System Share (Best for Mobile)
+    // This allows sharing the ACTUAL image file to WhatsApp
+    if (shareFile && navigator.share && navigator.canShare && navigator.canShare({ files: [shareFile] })) {
       try {
         await navigator.share({
           files: [shareFile],
@@ -2352,44 +2362,32 @@ const OrderSuccessModal = ({ order, onClose }: { order: Order | null; onClose: (
         });
         return;
       } catch (err) {
-        console.error('Share failed:', err);
-      }
-    }
-
-    // If not pre-generated yet (user clicked too fast), generate it now
-    if (!shareFile) {
-      setIsGenerating(true);
-      const element = document.getElementById('invoice-capture-area');
-      if (element) {
-        try {
-          const blob = await htmlToImage.toBlob(element, {
-            backgroundColor: '#FAF3E0',
-            width: 500,
-            height: element.offsetHeight,
-            pixelRatio: 2,
-            cacheBust: true,
-          });
-          if (blob) {
-            const file = new File([blob], `mud-invoice-${order.orderId || order.id}.png`, { type: 'image/png' });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              await navigator.share({
-                files: [file],
-                title: 'Mud Restaurant Invoice',
-                text: msg,
-              });
-              setIsGenerating(false);
-              return;
-            }
-          }
-        } catch (err) {
-          console.error('On-demand generation error:', err);
+        if ((err as Error).name !== 'AbortError') {
+          console.error('System share failed:', err);
+        } else {
+          return; // User cancelled
         }
       }
-      setIsGenerating(false);
     }
 
-    // Ultimate fallback: Open WhatsApp directly with text message
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+    // 2. Fallback: Copy Image to Clipboard + Open WhatsApp Link
+    // This is the best way to "attach" an image to a specific contact chat from web
+    if (shareFile && navigator.clipboard && navigator.clipboard.write) {
+      setCopyStatus('copying');
+      try {
+        const data = [new ClipboardItem({ [shareFile.type]: shareFile })];
+        await navigator.clipboard.write(data);
+        setCopyStatus('copied');
+        setTimeout(() => setCopyStatus('idle'), 4000);
+      } catch (err) {
+        console.error('Clipboard copy failed:', err);
+        setCopyStatus('failed');
+      }
+    }
+
+    // Open WhatsApp directly to the restaurant
+    const whatsappUrl = `https://wa.me/${RESTAURANT_PHONE}?text=${encodeURIComponent(msg)}`;
+    window.open(whatsappUrl, '_blank');
   };
 
   if (!order) return null;
@@ -2402,6 +2400,27 @@ const OrderSuccessModal = ({ order, onClose }: { order: Order | null; onClose: (
           <InvoiceContent order={order} lang={lang} />
         </div>
       </div>
+
+      {/* Copy Notification Toast */}
+      <AnimatePresence>
+        {copyStatus === 'copied' && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[400] bg-[#1A1A1A] text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 border border-white/10"
+          >
+            <div className="w-8 h-8 bg-[#25D366] rounded-full flex items-center justify-center">
+              <MessageCircle size={16} className="text-white" />
+            </div>
+            <div className="text-xs font-bold tracking-wide">
+              {lang === 'en' 
+                ? "Invoice copied! Just PASTE it in the WhatsApp chat." 
+                : "تم نسخ الفاتورة! فقط قم بـ لَصقها في محادثة الواتساب."}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <motion.div 
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -2420,10 +2439,10 @@ const OrderSuccessModal = ({ order, onClose }: { order: Order | null; onClose: (
           <div className="grid grid-cols-2 gap-3">
             <button 
               onClick={handleWhatsAppShare} 
-              disabled={isGenerating}
+              disabled={isGenerating && !shareFile}
               className="w-full flex items-center justify-center gap-3 py-4 bg-[#25D366] text-white rounded-2xl font-bold text-[10px] tracking-[0.1em] uppercase hover:bg-[#128C7E] transition-all shadow-lg disabled:opacity-50"
             >
-              {isGenerating ? (
+              {isGenerating && !shareFile ? (
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <MessageCircle size={18} />

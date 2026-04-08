@@ -14,6 +14,7 @@ import {
   User
 } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfigJson from '../firebase-applet-config.json';
 
 // Use environment variables if available, otherwise fallback to the config file
@@ -30,6 +31,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 export { 
   sendPasswordResetEmail, 
@@ -40,6 +42,9 @@ export {
   EmailAuthProvider,
   reauthenticateWithCredential,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  ref,
+  uploadBytes,
+  getDownloadURL
 };
 export type { User };
