@@ -1,23 +1,31 @@
 import { db } from "../firebase";
 import { collection, addDoc, Timestamp } from "firebase/firestore";
 
-export const saveOrder = async ({ orderId, items, amount, source }: { orderId: string, items: string, amount: number, source: string }) => {
-  try {
-    // Normalize source to lowercase for consistency
-    const normalizedSource = source.toLowerCase();
-    
-    // Use the custom orderId as the document ID for easier tracking and to avoid duplicates
-    // However, if we want to allow multiple orders with same ID (not recommended), we'd use addDoc.
-    // Let's use addDoc but store the orderId field clearly.
-    await addDoc(collection(db, "orders"), {
-      orderId,
-      items,
-      amount,
-      source: normalizedSource,
-      date: Timestamp.now(),
-    });
-  } catch (error) {
-    console.error("Error saving order to Firestore:", error);
-    throw error;
-  }
+export interface OrderPayload {
+  orderId: string;
+  items: any;
+  amount: number;
+  source: string;
+}
+
+/**
+ * Saves an order to Firestore.
+ * - Always awaits the write (no fire-and-forget).
+ * - Throws on failure so the caller can show a real error to the user.
+ * - Normalises `source` to lowercase so report filters work correctly.
+ */
+export const saveOrder = async ({
+  orderId,
+  items,
+  amount,
+  source,
+}: OrderPayload): Promise<string> => {
+  const docRef = await addDoc(collection(db, "orders"), {
+    orderId,
+    items,
+    amount: Number(amount) || 0,
+    source: source.toLowerCase(), // MUST be "online" or "offline" (lowercase)
+    date: Timestamp.now(),
+  });
+  return docRef.id; // Return Firestore document ID for reference
 };

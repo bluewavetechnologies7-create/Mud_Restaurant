@@ -1261,7 +1261,7 @@ const AdminDashboard = () => {
     return {
       total: items.length,
       categories: new Set(items.map(i => i.category)).size,
-      avgPrice: (items.reduce((sum, i) => sum + i.price, 0) / items.length).toFixed(2)
+      avgPrice: items.length > 0 ? (items.reduce((sum, i) => sum + (Number(i.price) || 0), 0) / items.length).toFixed(2) : "0.00"
     };
   }, [items]);
 
@@ -1566,7 +1566,7 @@ const AdminDashboard = () => {
                       <div className="flex-grow space-y-4">
                         <p className="text-lg font-bold text-mud-ink leading-tight">
                           {Array.isArray(order.items) 
-                            ? order.items.map((item: any) => `${item.name?.ar || item.name} x${item.quantity}`).join(', ')
+                            ? order.items.map((item: any) => `${item?.name?.[language] || item?.name || ''} x${item?.quantity || 0}`).join(', ')
                             : order.items}
                         </p>
                         <div className="flex flex-wrap gap-3">
@@ -2257,70 +2257,24 @@ const InvoiceContent = ({ order, lang, id }: { order: Order; lang: Language; id?
   );
 };
 
-const generateInvoicePDF = (order: Order) => {
-  const doc = new jsPDF();
-  
-  // Brand Colors
-  const burgundy: [number, number, number] = [122, 27, 27];
-  const amber: [number, number, number] = [232, 155, 47];
-  const cream: [number, number, number] = [250, 243, 224];
-  
-  // 1. Header Background
-  doc.setFillColor(burgundy[0], burgundy[1], burgundy[2]);
-  doc.rect(0, 0, 210, 45, 'F');
-  
-  // 2. Restaurant Name
-  doc.setTextColor(amber[0], amber[1], amber[2]);
-  doc.setFontSize(22);
-  doc.text("MUD RESTAURANT", 105, 20, { align: 'center' });
-  
-  doc.setTextColor(cream[0], cream[1], cream[2]);
-  doc.setFontSize(10);
-  doc.text("AL MADINAH AL MUNAWWARAH, KSA", 105, 28, { align: 'center' });
-  
-  // 3. Invoice Info
-  doc.setTextColor(26, 26, 26);
-  doc.setFontSize(10);
-  doc.text(`Invoice No: ${order.id}`, 20, 60);
-  doc.text(`Date: ${new Date(order.date).toLocaleString()}`, 20, 67);
-  doc.text(`Customer: ${order.customerName}`, 20, 74);
-  
-  // 4. Prepare Table Data
-  const tableData = order.items.map(item => [
-    item.name.en,
-    item.quantity,
-    `${item.price} SAR`,
-    `${item.price * item.quantity} SAR`
-  ]);
+const downloadInvoiceImage = async (order: Order) => {
+  const element = document.getElementById('invoice-capture-area');
+  if (!element) return;
 
-  // 5. Generate Table
-  autoTable(doc, {
-    startY: 85,
-    head: [['Item', 'Qty', 'Price', 'Total']],
-    body: tableData,
-    theme: 'grid',
-    headStyles: { fillColor: burgundy, textColor: [255, 255, 255] },
-    styles: { fontSize: 9 },
-    alternateRowStyles: { fillColor: [250, 250, 250] }
-  });
-
-  // 6. Grand Total Box
-  const finalY = (doc as any).lastAutoTable.finalY + 15;
-  doc.setFillColor(burgundy[0], burgundy[1], burgundy[2]);
-  doc.rect(140, finalY - 10, 50, 15, 'F');
-  
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(12);
-  doc.text(`TOTAL: ${order.total} SAR`, 185, finalY, { align: 'right' });
-
-  // 7. Footer Note
-  doc.setTextColor(122, 27, 27);
-  doc.setFontSize(9);
-  doc.text("Please arrive at the restaurant 5 minutes after ordering.", 105, finalY + 25, { align: 'center' });
-  doc.text("Thank you for your visit!", 105, finalY + 32, { align: 'center' });
-
-  // 8. Save File
-  doc.save(`Mud_Invoice_${order.id}.pdf`);
+  try {
+    const dataUrl = await htmlToImage.toPng(element, {
+      backgroundColor: '#FAF3E0',
+      pixelRatio: 3, // Higher quality for download
+      cacheBust: true,
+    });
+    
+    const link = document.createElement('a');
+    link.download = `Mud_Invoice_${order.orderId || order.id}.png`;
+    link.href = dataUrl;
+    link.click();
+  } catch (err) {
+    console.error('Image download error:', err);
+  }
 };
 
 const OrderSuccessModal = ({ order, onClose }: { order: Order | null; onClose: () => void }) => {
@@ -2471,11 +2425,11 @@ const OrderSuccessModal = ({ order, onClose }: { order: Order | null; onClose: (
               {lang === 'en' ? 'WhatsApp' : 'واتساب'}
             </button>
             <button 
-              onClick={() => generateInvoicePDF(order)}
+              onClick={() => downloadInvoiceImage(order)}
               className="flex items-center justify-center gap-3 py-4 bg-white border border-[#E89B2F]/20 text-[#1A1A1A] rounded-2xl font-bold text-[10px] tracking-[0.1em] uppercase hover:bg-[#C87800] hover:text-white hover:border-[#C87800] transition-all duration-500 shadow-sm"
             >
               <Download size={18} />
-              {lang === 'en' ? 'Download PDF' : 'تحميل PDF'}
+              {lang === 'en' ? 'Download Image' : 'تحميل الصورة'}
             </button>
           </div>
           <button onClick={onClose} className="w-full py-4 bg-white border border-[#E89B2F]/20 text-[#1A1A1A] rounded-2xl font-bold text-[10px] tracking-[0.2em] uppercase hover:bg-[#7A1B1B] hover:text-white transition-all flex items-center justify-center gap-2">
@@ -2494,6 +2448,7 @@ const Cart = () => {
   const [showSuccess, setShowSuccess] = useState(false);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [isOrderSuccess, setIsOrderSuccess] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const isAr = language === 'ar';
 
@@ -2505,49 +2460,50 @@ const Cart = () => {
 
   const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-  const handlePlaceOrder = async () => {
-    if (isPlacingOrder) return;
-    setIsPlacingOrder(true);
+  const handlePlaceOrder = () => {
+    if (cart.length === 0) return;
     
-    try {
-      const orderId = Math.floor(1000 + Math.random() * 9000).toString();
-      const itemsString = cart.map(item => `${item.name.en} x${item.quantity}`).join(', ');
-      
-      const orderData = {
-        orderId,
-        items: itemsString,
-        amount: total,
-        source: 'Online'
-      };
+    // Prevent double clicks using a simple flag if needed, but the user wants "instant"
+    // We'll just clear the cart and close the drawer immediately.
+    
+    const orderId = Math.floor(1000 + Math.random() * 9000).toString();
 
-      const fullOrder: Order = {
-        id: orderId,
-        orderId: orderId,
-        customerName: 'Online Customer',
-        items: cart.map(item => ({
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity
-        })),
-        total: total,
-        date: new Date().toISOString()
-      };
+    const orderPayload = {
+      orderId,
+      items: cart.map((item) => ({
+        name: item.name,
+        price: Number(item.price) || 0,
+        quantity: Number(item.quantity) || 0,
+      })),
+      amount: Number(total) || 0,
+      source: "online",
+    };
 
-      // Start saving to Firestore in the background to avoid UI delay
-      saveOrder(orderData).catch(err => console.error('Background save failed:', err));
+    // 1. Save in background (Optimistic UI)
+    // We don't await this, so it doesn't block the UI.
+    saveOrder(orderPayload).catch(error => {
+      console.error("Background order save failed:", error);
+    });
 
-      // Show success modal immediately for better UX
-      setLastOrder(fullOrder);
-      setIsOpen(false);
-      clearCart();
-      setShowSuccess(true);
-    } catch (error) {
-      console.error('Order placement failed:', error);
-      setOrderError(isAr ? 'عذراً، حدث خطأ أثناء إتمام الطلب. يرجى المحاولة مرة أخرى.' : 'Sorry, an error occurred while placing your order. Please try again.');
-      setTimeout(() => setOrderError(null), 5000);
-    } finally {
-      setIsPlacingOrder(false);
-    }
+    // 2. Prepare order for success modal
+    const fullOrder: Order = {
+      id: orderId,
+      orderId,
+      customerName: "Online Customer",
+      items: orderPayload.items,
+      total,
+      date: new Date().toISOString(),
+    };
+
+    // 3. Instant UI Transition
+    // We do these in a specific order to ensure the modal shows up and the cart clears
+    setLastOrder(fullOrder);
+    setShowSuccess(true);
+    setIsOpen(false);
+    clearCart();
+    
+    // Reset local loading state just in case
+    setIsPlacingOrder(false);
   };
 
 
@@ -2665,17 +2621,9 @@ const Cart = () => {
                   )}
                   <button 
                     onClick={handlePlaceOrder}
-                    disabled={isPlacingOrder}
-                    className="w-full bg-mud-earth text-white py-5 rounded-2xl font-bold uppercase tracking-widest hover:bg-mud-clay transition-all shadow-xl shadow-mud-earth/20 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                    className="w-full py-5 rounded-2xl font-bold uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2 bg-mud-earth text-white hover:bg-mud-clay shadow-mud-earth/20 active:scale-95"
                   >
-                    {isPlacingOrder ? (
-                      <>
-                        <RefreshCw className="animate-spin" size={20} />
-                        {isAr ? 'جاري الطلب...' : 'Placing Order...'}
-                      </>
-                    ) : (
-                      isAr ? 'إتمام الطلب' : 'Place Order'
-                    )}
+                    {isAr ? 'إتمام الطلب' : 'Place Order'}
                   </button>
                   <button 
                     onClick={clearCart}

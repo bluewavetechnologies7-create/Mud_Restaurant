@@ -1,28 +1,74 @@
-import React, { useEffect, useState } from "react";
+// src/ReportPage.tsx  ── Complete replacement ────────────────────────────────
+import React, { useEffect, useState, useCallback } from "react";
 import { db } from "./firebase";
 import { useLanguage } from "./App";
 import {
-  collection, query, where, orderBy, getDocs, Timestamp, limit,
+  collection,
+  query,
+  where,
+  orderBy,
+  getDocs,
+  Timestamp,
+  limit,
 } from "firebase/firestore";
-import { LayoutDashboard, Download, FileText, Calendar, RefreshCw } from "lucide-react";
+import {
+  LayoutDashboard,
+  Download,
+  FileText,
+  Calendar,
+  RefreshCw,
+  ShoppingBag,
+  Wifi,
+  WifiOff,
+  DollarSign,
+  AlertCircle,
+} from "lucide-react";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+interface OrderItem {
+  name: { en?: string; ar?: string } | string;
+  price: number;
+  quantity: number;
+}
 
 interface Order {
   id: string;
   orderId: string;
-  items: string;
+  items: OrderItem[] | any;
   amount: number;
   source: string;
-  date: Timestamp;
+  date: Timestamp | Date | string | any;
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const toDate = (raw: any): Date => {
+  if (!raw) return new Date();
+  if (typeof raw?.toDate === "function") return raw.toDate();       // Firestore Timestamp
+  if (raw instanceof Date) return raw;
+  const parsed = new Date(raw);
+  return isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+const safeItemName = (item: any, lang: string): string => {
+  if (!item) return "";
+  if (typeof item.name === "object" && item.name !== null) {
+    return item.name[lang] || item.name.en || item.name.ar || "";
+  }
+  return String(item.name || "");
+};
+
+// ─── Component ───────────────────────────────────────────────────────────────
 export default function ReportPage() {
   const { language, t } = useLanguage();
-  const isAr = language === 'ar';
+  const isAr = language === "ar";
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [range, setRange] = useState<"daily" | "weekly">("weekly");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const getDateRange = () => {
+  // ── Date helpers ────────────────────────────────────────────────────────────
+  const getDateRange = useCallback(() => {
     const now = new Date();
     const start = new Date();
     if (range === "daily") {
@@ -32,296 +78,432 @@ export default function ReportPage() {
       start.setHours(0, 0, 0, 0);
     }
     return { start, end: now };
-  };
+  }, [range]);
 
-  const getRangeLabel = () => {
+  const getRangeLabel = (): string => {
     const { start } = getDateRange();
     const fmt = (d: Date) =>
       d.toLocaleDateString(isAr ? "ar-SA" : "en-GB", {
-        day: "numeric", month: "long", year: "numeric",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
       });
     return range === "daily"
       ? fmt(new Date())
       : `${fmt(start)} – ${fmt(new Date())}`;
   };
 
-  useEffect(() => {
-    const fetchOrders = async () => {
-      setLoading(true);
-      try {
-        const { start } = getDateRange();
-        const q = query(
-          collection(db, "orders"),
-          where("date", ">=", Timestamp.fromDate(start)),
-          orderBy("date", "desc"),
-          limit(500)
-        );
-        const snap = await getDocs(q);
-        setOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Order)));
-      } catch (error) {
-        console.error("Error fetching orders:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchOrders();
-  }, [range]);
+  // ── Fetch orders ────────────────────────────────────────────────────────────
+  const fetchOrders = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { start } = getDateRange();
+      const startTs = Timestamp.fromDate(start);
 
-  const summaryStats = React.useMemo(() => {
-    const totalRevenue = orders.reduce((s, o) => s + (o.amount || 0), 0);
-    const online = orders.filter((o) => o.source === "Online" || o.source === "online").length;
-    const offline = orders.filter((o) => o.source === "Offline" || o.source === "offline").length;
+      // ✅ FIX: Use only a single orderBy to avoid requiring a composite index.
+      // Firestore requires a composite index for (where field) + (orderBy different field).
+      // Using orderBy("date") on the same field we filter by avoids the index error.
+      const q = query(
+        collection(db, "orders"),
+        where("date", ">=", startTs),
+        orderBy("date", "desc"),
+        limit(1000)
+      );
+
+      const snap = await getDocs(q);
+      const fetched: Order[] = snap.docs.map(
+        (d) => ({ id: d.id, ...d.data() } as Order)
+      );
+      setOrders(fetched);
+    } catch (err: any) {
+      console.error("ReportPage fetchOrders error:", err);
+
+      // ✅ Provide actionable error messages
+      if (err?.code === "failed-precondition" || err?.message?.includes("index")) {
+        setError(
+          isAr
+            ? "يلزم إنشاء فهرس في Firebase. انظر وحدة التحكم للحصول على الرابط."
+            : "A Firestore index is required. Check your browser console for the link to create it, then refresh."
+        );
+      } else if (err?.code === "permission-denied") {
+        setError(
+          isAr
+            ? "ليس لديك صلاحية لعرض الطلبات. تأكد من تسجيل الدخول كمسؤول."
+            : "Permission denied. Make sure you are logged in as an admin."
+        );
+      } else {
+        setError(err?.message || (isAr ? "فشل في جلب الطلبات." : "Failed to fetch orders."));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [range, getDateRange, isAr]);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
+
+  // ── Stats ───────────────────────────────────────────────────────────────────
+  const stats = React.useMemo(() => {
+    const totalRevenue = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+    const online = orders.filter(
+      (o) => (o.source || "").toLowerCase() === "online"
+    ).length;
+    const offline = orders.filter(
+      (o) => (o.source || "").toLowerCase() === "offline"
+    ).length;
     return { totalRevenue, online, offline };
   }, [orders]);
 
-  const { totalRevenue, online, offline } = summaryStats;
-  const generatedAt = React.useMemo(() => new Date().toLocaleString(isAr ? "ar-SA" : "en-GB"), [orders, isAr]);
+  const generatedAt = new Date().toLocaleString(isAr ? "ar-SA" : "en-GB");
 
-  // ── CSV Download ──────────────────────────────────────────
+  // ── CSV Download ────────────────────────────────────────────────────────────
   const downloadCSV = () => {
-    const headers = isAr 
-      ? ["#", "رقم الطلب", "الأصناف", "التاريخ", "الوقت", "المبلغ", "المصدر"]
-      : ["#", "Order ID", "Items", "Date", "Time", "Amount", "Source"];
-    const rows = orders.map((o, i) => {
-      const d = o.date && typeof o.date.toDate === 'function' ? o.date.toDate() : new Date();
-      const itemsList = Array.isArray(o.items) 
-        ? o.items.map((item: any) => `${item.name?.ar || item.name} x${item.quantity}`).join(' | ')
-        : String(o.items || '');
-      return [
-        i + 1,
-        o.orderId,
-        `"${itemsList.replace(/"/g, '""')}"`,
-        d.toLocaleDateString(isAr ? "ar-SA" : "en-GB"),
-        d.toLocaleTimeString(isAr ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" }),
-        (o.amount || 0).toFixed(2),
-        o.source,
-      ];
-    });
-    const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
-    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `report-${range}-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-  };
+    try {
+      const headers = isAr
+        ? ["#", "رقم الطلب", "الأصناف", "التاريخ", "الوقت", "المبلغ (ر.س)", "المصدر"]
+        : ["#", "Order ID", "Items", "Date", "Time", "Amount (SAR)", "Source"];
 
-  // ── PDF Download ──────────────────────────────────────────
-  const downloadPDF = () => {
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-    const title = range === "weekly" 
-      ? (isAr ? "تقرير المبيعات الأسبوعي" : "Weekly Sales Report") 
-      : (isAr ? "تقرير المبيعات اليومي" : "Daily Sales Report");
-    const rows = orders
-      .map(
-        (o, i) => {
-          const d = o.date && typeof o.date.toDate === 'function' ? o.date.toDate() : new Date();
-          const itemsList = Array.isArray(o.items) 
-            ? o.items.map((item: any) => `${item.name?.ar || item.name} x${item.quantity}`).join(', ')
-            : String(o.items || '');
-          return `
-          <tr>
-            <td>${i + 1}</td>
-            <td>${o.orderId}</td>
-            <td>${itemsList}</td>
-            <td>${d.toLocaleDateString(isAr ? "ar-SA" : "en-GB")}</td>
-            <td>${d.toLocaleTimeString(isAr ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" })}</td>
-            <td><strong>${(o.amount || 0).toFixed(2)} SAR</strong></td>
-            <td>${o.source}</td>
-          </tr>`;
+      const rows = orders.map((o, i) => {
+        const d = toDate(o.date);
+
+        // ✅ FIX: Safely handle items whether array or stringified JSON
+        let itemsList = "";
+        try {
+          const itemsArr = Array.isArray(o.items)
+            ? o.items
+            : typeof o.items === "string"
+            ? JSON.parse(o.items)
+            : [];
+          itemsList = itemsArr
+            .map(
+              (item: any) =>
+                `${safeItemName(item, language)} x${item?.quantity ?? 0}`
+            )
+            .join(" | ");
+        } catch {
+          itemsList = String(o.items || "");
         }
-      )
-      .join("");
 
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html lang="${isAr ? 'ar' : 'en'}" dir="${isAr ? 'rtl' : 'ltr'}">
-      <head>
-        <title>${title}</title>
-        <style>
-          @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
-          body { font-family: ${isAr ? "'Amiri', serif" : "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"}; margin: 0; background: #fdfbf7; color: #2d1a1a; }
-          .header { background: #7b1c1c; color: #ffffff; padding: 40px 32px; text-align: center; }
-          .header h1 { margin: 0 0 8px; font-size: 32px; font-family: serif; font-style: italic; }
-          .header p { margin: 0; opacity: 0.9; font-size: 16px; letter-spacing: 1px; }
-          .generated { background: #5d1515; color: #f5c6c6; font-size: 11px; padding: 10px 32px; text-align: ${isAr ? 'left' : 'right'}; text-transform: uppercase; letter-spacing: 1px; }
-          .summary { display: flex; gap: 20px; padding: 32px; background: #fff; border-bottom: 1px solid #eee; }
-          .card { flex: 1; border: 1px solid #e0d8cc; border-radius: 16px; padding: 20px; text-align: center; background: #ffffff; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
-          .card .label { font-size: 10px; color: #8c7e7e; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 10px; font-weight: bold; }
-          .card .value { font-size: 28px; font-weight: 800; color: #7b1c1c; }
-          .section { padding: 40px 32px; }
-          .section h2 { font-size: 22px; margin-bottom: 20px; color: #7b1c1c; font-family: serif; font-style: italic; border-bottom: 2px solid #7b1c1c; display: inline-block; padding-bottom: 4px; }
-          table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; border: 1px solid #e0d8cc; border-radius: 12px; overflow: hidden; }
-          th { background: #7b1c1c; color: #ffffff; padding: 14px 16px; text-align: ${isAr ? 'right' : 'left'}; text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }
-          td { padding: 14px 16px; border-bottom: 1px solid #f0e9df; background: #ffffff; text-align: ${isAr ? 'right' : 'left'}; }
-          tr:nth-child(even) td { background: #faf8f5; }
-          tr:last-child td { border-bottom: none; }
-          .total-row td { font-weight: 800; background: #f5ece0 !important; color: #7b1c1c; font-size: 14px; }
-          .footer { text-align: center; padding: 30px; font-size: 10px; color: #bbb; letter-spacing: 1px; }
-          @media print {
-            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            .card { break-inside: avoid; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>${title}</h1>
-          <p>${getRangeLabel()}</p>
-        </div>
-        <div class="generated">${isAr ? "تم الإنشاء في" : "Report Generated"}: ${generatedAt}</div>
-        <div class="summary">
-          <div class="card"><div class="label">${isAr ? "إجمالي الطلبات" : "Total Orders"}</div><div class="value">${orders.length}</div></div>
-          <div class="card"><div class="label">${isAr ? "أونلاين" : "Online"}</div><div class="value">${online}</div></div>
-          <div class="card"><div class="label">${isAr ? "محلي" : "Offline"}</div><div class="value">${offline}</div></div>
-          <div class="card"><div class="label">${isAr ? "إجمالي الإيرادات" : "Total Revenue"}</div><div class="value">${totalRevenue.toFixed(2)} SAR</div></div>
-        </div>
-        <div class="section">
-          <h2>${isAr ? "تفاصيل الطلبات" : "Order Details"}</h2>
-          <table>
-            <thead>
-              <tr>
-                ${(isAr 
-                  ? ["#", "رقم الطلب", "الأصناف", "التاريخ", "الوقت", "المبلغ", "المصدر"]
-                  : ["#", "Order ID", "Items", "Date", "Time", "Amount", "Source"]
-                ).map(h => `<th>${h}</th>`).join('')}
-              </tr>
-            </thead>
-            <tbody>
-              ${rows}
-              <tr class="total-row">
-                <td colspan="5" style="text-align: ${isAr ? 'left' : 'right'};">${isAr ? "إجمالي الإيرادات" : "TOTAL REVENUE"}</td>
-                <td colspan="2">${totalRevenue.toFixed(2)} SAR</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="footer">© ${new Date().getFullYear()} ${isAr ? "نظام إدارة مطعم مُد — سري" : "MUD Restaurant Management System — Confidential"}</div>
-      </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
+        const esc = (val: any) =>
+          `"${String(val ?? "").replace(/"/g, '""')}"`;
+
+        return [
+          esc(i + 1),
+          esc(o.orderId || o.id),
+          esc(itemsList),
+          esc(d.toLocaleDateString(isAr ? "ar-SA" : "en-GB")),
+          esc(
+            d.toLocaleTimeString(isAr ? "ar-SA" : "en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          ),
+          esc((Number(o.amount) || 0).toFixed(2)),
+          esc(o.source || ""),
+        ];
+      });
+
+      // Summary rows at the bottom
+      const sep = ["", "", "", "", "", "", ""];
+      const summaryRows = [
+        sep,
+        isAr
+          ? ["", "", "", "", "إجمالي الطلبات", String(orders.length), ""]
+          : ["", "", "", "", "Total Orders", String(orders.length), ""],
+        isAr
+          ? ["", "", "", "", "أونلاين", String(stats.online), ""]
+          : ["", "", "", "", "Online", String(stats.online), ""],
+        isAr
+          ? ["", "", "", "", "أوفلاين", String(stats.offline), ""]
+          : ["", "", "", "", "Offline", String(stats.offline), ""],
+        isAr
+          ? ["", "", "", "", "الإيرادات", `${stats.totalRevenue.toFixed(2)} ر.س`, ""]
+          : ["", "", "", "", "Revenue", `SAR ${stats.totalRevenue.toFixed(2)}`, ""],
+      ].map((r) => r.map((v) => `"${v}"`));
+
+      const allRows = [headers.map((h) => `"${h}"`), ...rows, ...summaryRows];
+      const csv = allRows.map((r) => r.join(",")).join("\n");
+
+      // ✅ BOM for correct Arabic/UTF-8 rendering in Excel
+      const blob = new Blob(["\ufeff" + csv], {
+        type: "text/csv;charset=utf-8;",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `mud-report-${range}-${new Date()
+        .toISOString()
+        .slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url); // ✅ Always revoke to prevent memory leaks
+    } catch (err: any) {
+      console.error("CSV download error:", err);
+      alert(
+        isAr
+          ? "فشل تحميل الملف. حاول مرة أخرى."
+          : "Failed to generate CSV. Please try again."
+      );
+    }
   };
 
-  // ── Styles ────────────────────────────────────────────────
-  const S: { [key: string]: any } = {
-    page: { fontFamily: isAr ? "'Amiri', serif" : "Arial, sans-serif", background: "#f5f0e8", minHeight: "100vh", paddingTop: '80px', textAlign: isAr ? 'right' : 'left' },
-    header: { background: "#7b1c1c", color: "white", padding: "20px 32px" },
-    h1: { margin: "0 0 4px", fontSize: 22 },
-    sub: { margin: 0, opacity: 0.85, fontSize: 13 },
-    generated: { background: "#7b1c1c", color: "#f5c6c6", fontSize: 12, padding: "6px 32px", borderTop: "1px solid #a03030" },
-    toolbar: { display: "flex", gap: 10, padding: "20px 32px 0", flexWrap: 'wrap' },
-    btn: (active: boolean) => ({
-      padding: "8px 20px", borderRadius: 6, border: "2px solid #7b1c1c",
-      background: active ? "#7b1c1c" : "white",
-      color: active ? "white" : "#7b1c1c",
-      fontWeight: "bold", cursor: "pointer", fontSize: 13,
-    }),
-    dlBtn: (color: string) => ({
-      padding: "8px 20px", borderRadius: 6, border: "none",
-      background: color, color: "white", fontWeight: "bold",
-      cursor: "pointer", fontSize: 13,
-    }),
-    summary: { display: "flex", gap: 16, padding: "20px 32px", flexWrap: 'wrap' },
-    card: { flex: 1, minWidth: '150px', border: "2px solid #7b1c1c", borderRadius: 10, padding: 16, textAlign: "center", background: "white" },
-    cardLabel: { fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 },
-    cardValue: { fontSize: 28, fontWeight: "bold", color: "#7b1c1c" },
-    section: { padding: "0 32px 32px" },
-    table: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
-    th: { background: "#7b1c1c", color: "white", padding: "10px 12px", textAlign: isAr ? "right" : "left" },
-    td: { padding: "10px 12px", borderBottom: "1px solid #e0d8cc" },
+  // ── PDF Download (print) ────────────────────────────────────────────────────
+  const downloadPDF = () => {
+    window.print();
   };
+
+  // ── UI ──────────────────────────────────────────────────────────────────────
+  const cardClass =
+    "bg-white rounded-2xl border border-[#8B1A1A]/20 p-6 flex flex-col items-center gap-2 shadow-sm";
 
   return (
-    <div style={S.page} dir={isAr ? "rtl" : "ltr"}>
-      <div style={S.header}>
-        <h1 style={S.h1}>
-          {range === "weekly" 
-            ? (isAr ? "تقرير المبيعات الأسبوعي" : "Weekly Sales Report") 
-            : (isAr ? "تقرير المبيعات اليومي" : "Daily Sales Report")}
-        </h1>
-        <p style={S.sub}>{getRangeLabel()}</p>
-      </div>
-      <div style={S.generated}>{isAr ? "تم الإنشاء في" : "Generated"}: {generatedAt}</div>
-
-      {/* Toolbar */}
-      <div style={S.toolbar}>
-        <button style={S.btn(range === "daily")} onClick={() => setRange("daily")}>{isAr ? "يومي" : "Daily"}</button>
-        <button style={S.btn(range === "weekly")} onClick={() => setRange("weekly")}>{isAr ? "أسبوعي" : "Weekly"}</button>
-        <div style={{ [isAr ? 'marginRight' : 'marginLeft']: 'auto', display: 'flex', gap: '10px' }}>
-          <button style={S.dlBtn("#2e7d32")} onClick={downloadCSV}>{isAr ? "تحميل CSV" : "Download CSV"}</button>
-          <button style={S.dlBtn("#1565c0")} onClick={downloadPDF}>{isAr ? "تحميل PDF" : "Download PDF"}</button>
+    <div
+      dir={isAr ? "rtl" : "ltr"}
+      className="min-h-screen bg-[#F5F0E8] font-sans"
+    >
+      {/* ── Header ── */}
+      <header className="bg-[#8B1A1A] text-white px-6 py-8">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-3 mb-1">
+            <LayoutDashboard size={22} />
+            <h1 className="text-2xl font-bold tracking-wide">
+              {isAr ? "تقرير المبيعات الأسبوعي" : "Weekly Sales Report"}
+            </h1>
+          </div>
+          <p className="text-white/70 text-sm mt-1">{getRangeLabel()}</p>
+          <p className="text-white/50 text-xs mt-1">
+            {isAr ? "تم الإنشاء:" : "Generated:"} {generatedAt}
+          </p>
         </div>
-      </div>
+      </header>
 
-      {/* Summary Cards */}
-      <div style={S.summary}>
-        {[
-          { label: isAr ? "إجمالي الطلبات" : "Total Orders", value: orders.length },
-          { label: isAr ? "أونلاين" : "Online", value: online },
-          { label: isAr ? "محلي" : "Offline", value: offline },
-          { label: isAr ? "إجمالي الإيرادات" : "Total Revenue", value: `${totalRevenue.toFixed(2)} SAR` },
-        ].map((c) => (
-          <div key={c.label} style={S.card}>
-            <div style={S.cardLabel}>{c.label}</div>
-            <div style={S.cardValue}>{c.value}</div>
+      <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        {/* ── Range Tabs + Download Buttons ── */}
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setRange("daily")}
+              className={`flex-1 py-2 rounded-xl font-semibold text-sm border-2 transition-all ${
+                range === "daily"
+                  ? "bg-[#8B1A1A] text-white border-[#8B1A1A]"
+                  : "bg-white text-[#8B1A1A] border-[#8B1A1A]"
+              }`}
+            >
+              {isAr ? "يومي" : "Daily"}
+            </button>
+            <button
+              onClick={() => setRange("weekly")}
+              className={`flex-1 py-2 rounded-xl font-semibold text-sm border-2 transition-all ${
+                range === "weekly"
+                  ? "bg-[#8B1A1A] text-white border-[#8B1A1A]"
+                  : "bg-white text-[#8B1A1A] border-[#8B1A1A]"
+              }`}
+            >
+              {isAr ? "أسبوعي" : "Weekly"}
+            </button>
           </div>
-        ))}
-      </div>
 
-      {/* Order Table */}
-      <div style={S.section}>
-        <h2 className="font-serif font-bold text-mud-ink mb-4">{isAr ? "تفاصيل الطلبات" : "Order Details"}</h2>
-        {loading ? (
-          <div className="flex items-center gap-2 text-mud-ink/60">
-            <RefreshCw className="animate-spin" size={20} />
-            <p>{isAr ? "جاري تحميل الطلبات..." : "Loading orders..."}</p>
+          <div className="flex gap-2">
+            <button
+              onClick={downloadCSV}
+              disabled={loading || orders.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#2E7D32] text-white font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+            >
+              <Download size={16} />
+              {isAr ? "تحميل CSV" : "Download CSV"}
+            </button>
+            <button
+              onClick={downloadPDF}
+              disabled={loading || orders.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#1565C0] text-white font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+            >
+              <FileText size={16} />
+              {isAr ? "تحميل PDF" : "Download PDF"}
+            </button>
           </div>
-        ) : orders.length === 0 ? (
-          <p style={{ color: "#888" }}>{isAr ? "لا توجد طلبات لهذه الفترة." : "No orders found for this period."}</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table style={S.table}>
-              <thead>
-                <tr>
-                  {(isAr 
-                    ? ["#", "رقم الطلب", "الأصناف", "التاريخ", "الوقت", "المبلغ", "المصدر"]
-                    : ["#", "Order ID", "Items", "Date", "Time", "Amount", "Source"]
-                  ).map((h) => (
-                    <th key={h} style={S.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {React.useMemo(() => orders.map((o, i) => {
-                  const d = o.date && typeof o.date.toDate === 'function' ? o.date.toDate() : new Date();
-                  const itemsList = Array.isArray(o.items) 
-                    ? o.items.map((item: any) => `${item.name?.ar || item.name} x${item.quantity}`).join(', ')
-                    : String(o.items || '');
-                  return (
-                    <tr key={o.id} style={{ background: i % 2 === 0 ? "white" : "#faf7f0" }}>
-                      <td style={S.td}>{i + 1}</td>
-                      <td style={S.td}>{o.orderId}</td>
-                      <td style={S.td}>{itemsList}</td>
-                      <td style={S.td}>{d.toLocaleDateString(isAr ? "ar-SA" : "en-GB")}</td>
-                      <td style={S.td}>{d.toLocaleTimeString(isAr ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" })}</td>
-                      <td style={{ ...S.td, fontWeight: "bold" }}>{(o.amount || 0).toFixed(2)} SAR</td>
-                      <td style={S.td}>{o.source}</td>
-                    </tr>
-                  );
-                }), [orders, isAr])}
-                <tr style={{ background: "#f5ece0" }}>
-                  <td colSpan={5} style={{ ...S.td, fontWeight: "bold", textAlign: isAr ? 'left' : 'right' }}>{isAr ? "إجمالي الإيرادات" : "TOTAL REVENUE"}</td>
-                  <td colSpan={2} style={{ ...S.td, fontWeight: "bold" }}>{totalRevenue.toFixed(2)} SAR</td>
-                </tr>
-              </tbody>
-            </table>
+        </div>
+
+        {/* ── Error Banner ── */}
+        {error && (
+          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl p-4 text-red-700 text-sm">
+            <AlertCircle size={18} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold mb-0.5">
+                {isAr ? "خطأ في جلب البيانات" : "Error loading data"}
+              </p>
+              <p>{error}</p>
+              <button
+                onClick={fetchOrders}
+                className="mt-2 flex items-center gap-1 text-red-600 underline text-xs"
+              >
+                <RefreshCw size={12} />
+                {isAr ? "إعادة المحاولة" : "Retry"}
+              </button>
+            </div>
           </div>
         )}
-        <p style={{ textAlign: "center", fontSize: 11, color: "#999", marginTop: 24 }}>
-          {isAr ? "سري — نظام إدارة المطعم" : "Confidential — Restaurant Management System"}
-        </p>
+
+        {/* ── Stat Cards ── */}
+        {loading ? (
+          <div className="grid grid-cols-2 gap-3">
+            {[...Array(4)].map((_, i) => (
+              <div
+                key={i}
+                className="bg-white rounded-2xl border border-[#8B1A1A]/10 p-6 h-28 animate-pulse"
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <div className={`${cardClass} col-span-2`}>
+              <ShoppingBag size={20} className="text-[#8B1A1A]/60" />
+              <p className="text-xs uppercase tracking-widest text-[#8B1A1A]/60">
+                {isAr ? "إجمالي الطلبات" : "Total Orders"}
+              </p>
+              <p className="text-4xl font-bold text-[#8B1A1A]">
+                {orders.length}
+              </p>
+            </div>
+
+            <div className={cardClass}>
+              <Wifi size={18} className="text-[#8B1A1A]/60" />
+              <p className="text-xs uppercase tracking-widest text-[#8B1A1A]/60">
+                {isAr ? "أونلاين" : "Online"}
+              </p>
+              <p className="text-3xl font-bold text-[#8B1A1A]">
+                {stats.online}
+              </p>
+            </div>
+
+            <div className={cardClass}>
+              <WifiOff size={18} className="text-[#8B1A1A]/60" />
+              <p className="text-xs uppercase tracking-widest text-[#8B1A1A]/60">
+                {isAr ? "أوفلاين" : "Offline"}
+              </p>
+              <p className="text-3xl font-bold text-[#8B1A1A]">
+                {stats.offline}
+              </p>
+            </div>
+
+            <div className={`${cardClass} col-span-2`}>
+              <DollarSign size={20} className="text-[#8B1A1A]/60" />
+              <p className="text-xs uppercase tracking-widest text-[#8B1A1A]/60">
+                {isAr ? "إجمالي الإيرادات" : "Total Revenue"}
+              </p>
+              <p className="text-3xl font-bold text-[#8B1A1A]">
+                {isAr
+                  ? `${stats.totalRevenue.toFixed(2)} ر.س`
+                  : `SAR ${stats.totalRevenue.toFixed(2)}`}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Orders Table ── */}
+        {!loading && !error && orders.length > 0 && (
+          <div className="bg-white rounded-2xl border border-[#8B1A1A]/20 overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-[#8B1A1A]/10 flex items-center gap-2">
+              <Calendar size={16} className="text-[#8B1A1A]/60" />
+              <h2 className="font-semibold text-sm text-[#8B1A1A]">
+                {isAr ? "تفاصيل الطلبات" : "Order Details"}
+              </h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-[#8B1A1A]/5 text-[#8B1A1A]/70 text-xs uppercase">
+                    <th className="px-4 py-2 text-start">{isAr ? "رقم" : "ID"}</th>
+                    <th className="px-4 py-2 text-start">{isAr ? "الأصناف" : "Items"}</th>
+                    <th className="px-4 py-2 text-start">{isAr ? "المبلغ" : "Amount"}</th>
+                    <th className="px-4 py-2 text-start">{isAr ? "المصدر" : "Source"}</th>
+                    <th className="px-4 py-2 text-start">{isAr ? "التاريخ" : "Date"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.map((o, idx) => {
+                    const d = toDate(o.date);
+                    let itemsDisplay = "";
+                    try {
+                      const arr = Array.isArray(o.items)
+                        ? o.items
+                        : JSON.parse(o.items);
+                      itemsDisplay = arr
+                        .map(
+                          (item: any) =>
+                            `${safeItemName(item, language)} ×${item?.quantity ?? 0}`
+                        )
+                        .join(", ");
+                    } catch {
+                      itemsDisplay = String(o.items || "");
+                    }
+
+                    return (
+                      <tr
+                        key={o.id}
+                        className={`border-t border-[#8B1A1A]/5 ${
+                          idx % 2 === 0 ? "bg-white" : "bg-[#8B1A1A]/[0.02]"
+                        }`}
+                      >
+                        <td className="px-4 py-3 font-mono text-xs text-[#8B1A1A]/60">
+                          #{o.orderId || o.id}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 max-w-[160px] truncate">
+                          {itemsDisplay}
+                        </td>
+                        <td className="px-4 py-3 font-semibold text-[#8B1A1A]">
+                          {(Number(o.amount) || 0).toFixed(2)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              (o.source || "").toLowerCase() === "online"
+                                ? "bg-green-100 text-green-700"
+                                : "bg-orange-100 text-orange-700"
+                            }`}
+                          >
+                            {o.source}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-500 text-xs">
+                          {d.toLocaleDateString(isAr ? "ar-SA" : "en-GB", {
+                            day: "numeric",
+                            month: "short",
+                          })}{" "}
+                          {d.toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Empty State ── */}
+        {!loading && !error && orders.length === 0 && (
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-[#8B1A1A]/40">
+            <ShoppingBag size={48} strokeWidth={1} />
+            <p className="text-sm font-medium">
+              {isAr
+                ? "لا توجد طلبات في هذه الفترة"
+                : "No orders in this period"}
+            </p>
+            <button
+              onClick={fetchOrders}
+              className="flex items-center gap-1.5 text-xs text-[#8B1A1A]/60 border border-[#8B1A1A]/20 px-3 py-1.5 rounded-lg"
+            >
+              <RefreshCw size={12} />
+              {isAr ? "تحديث" : "Refresh"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

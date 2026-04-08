@@ -1,38 +1,58 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper Functions
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function isAdmin() {
-      return isAuthenticated() && 
-        (request.auth.token.email == "armyprince7@gmail.com" || 
-         request.auth.token.email == "admin@restaurant.com" ||
-         request.auth.token.email == get(/databases/$(database)/documents/settings/admin).data.adminEmail);
+      return isAuthenticated() && (
+        request.auth.token.email == "armyprince7@gmail.com" ||
+        request.auth.token.email == "admin@restaurant.com" ||
+        // Dynamically check the adminEmail stored in settings
+        (
+          exists(/databases/$(database)/documents/settings/admin) &&
+          request.auth.token.email ==
+            get(/databases/$(database)/documents/settings/admin).data.adminEmail
+        )
+      );
     }
 
-    // Settings
+    // ── Settings ─────────────────────────────────────────────────────────────
     match /settings/{settingId} {
-      allow read: if true; // Publicly readable for login check
+      allow read:  if true;       // Public: needed for the admin login check
       allow write: if isAdmin();
     }
 
-    // Orders
+    // ── Orders ───────────────────────────────────────────────────────────────
+    // FIX: `allow create: if true` lets ANY visitor write an order.
+    // This is correct for an online ordering flow.
+    // The field validation below prevents garbage data from being written.
     match /orders/{orderId} {
-      allow read: if isAdmin();
-      allow create: if true; // Allow customers to place orders
-      allow update, delete: if isAdmin();
+      allow read, update, delete: if isAdmin();
+
+      allow create: if
+        // Required fields must be present
+        request.resource.data.keys().hasAll(["orderId", "items", "amount", "source", "date"]) &&
+        // Types must be correct
+        request.resource.data.orderId is string &&
+        request.resource.data.amount  is number &&
+        request.resource.data.source  is string &&
+        // Source must be one of the two expected values
+        request.resource.data.source in ["online", "offline"] &&
+        // Amount must be non-negative
+        request.resource.data.amount >= 0;
     }
 
-    // Menu Items
+    // ── Menu Items ───────────────────────────────────────────────────────────
     match /menu_items/{itemId} {
-      allow read: if true; // Publicly readable
+      allow read:  if true;       // Public: customers browse the menu
       allow write: if isAdmin();
     }
-    
-    // Users (for admin role check if needed later)
+
+    // ── Users ────────────────────────────────────────────────────────────────
     match /users/{userId} {
       allow read, write: if request.auth.uid == userId || isAdmin();
     }
