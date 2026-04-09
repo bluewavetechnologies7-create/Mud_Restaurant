@@ -175,13 +175,25 @@ const ScrollToTop = () => {
   return null;
 };
 
+// --- Helpers ---
+const throttle = (func: Function, limit: number) => {
+  let inThrottle: boolean;
+  return function(this: any, ...args: any[]) {
+    if (!inThrottle) {
+      func.apply(this, args);
+      inThrottle = true;
+      setTimeout(() => inThrottle = false, limit);
+    }
+  };
+};
+
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const location = useLocation();
 
   useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 50);
+    const handleScroll = throttle(() => setScrolled(window.scrollY > 50), 100);
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
@@ -517,12 +529,12 @@ const Home = () => {
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
+            transition={{ duration: 0.5 }}
             className="space-y-4"
           >
             <span className="text-mud-gold font-serif italic text-xl md:text-2xl tracking-wide block">
               {isAr ? 'مرحباً بكم في مطعم مُد' : 'Welcome to Mud Restaurant'}
-            </span>
+</span>
             <h1 className="text-5xl md:text-8xl font-bold text-white tracking-tighter leading-none uppercase font-serif">
               {isAr ? (
                 <>أصالة <br /> <span className="text-mud-gold italic">المذاق العربي واليمني</span></>
@@ -625,7 +637,8 @@ const Home = () => {
                   <img 
                     src={dish.image} 
                     alt={`${translate(dish.name)} - Authentic Yemeni Dish`} 
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                    loading="lazy"
                     referrerPolicy="no-referrer"
                   />
                   <div className="absolute top-6 right-6 bg-white/90 backdrop-blur-md px-4 py-2 rounded-full font-bold text-mud-earth shadow-lg">
@@ -848,18 +861,19 @@ const Menu = () => {
           src={MENU_HERO_IMAGE} 
           alt="Menu Hero" 
           className="w-full h-full object-cover"
+          loading="lazy"
           referrerPolicy="no-referrer"
         />
         <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-center px-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
+            transition={{ duration: 0.5 }}
             className="space-y-4"
           >
             <span className="text-mud-gold font-serif italic text-xl md:text-2xl tracking-wide block">
               {lang === 'en' ? 'Discover Our Flavors' : 'اكتشف نكهاتنا'}
-            </span>
+</span>
             <h1 className="text-5xl md:text-8xl font-bold text-white tracking-tighter leading-none uppercase font-serif">
               {lang === 'en' ? 'Our Menu' : 'قائمة الطعام'}
             </h1>
@@ -895,7 +909,8 @@ const Menu = () => {
             <img 
               src={CATEGORY_IMAGES[activeCategory]} 
               alt={`${activeCategory} Category - Mud Restaurant Menu`}
-              className="w-full h-full transition-transform duration-1000 object-cover group-hover/header:scale-105"
+              className="w-full h-full transition-transform duration-500 object-cover group-hover/header:scale-105"
+              loading="lazy"
               referrerPolicy="no-referrer"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-mud-ink/90 via-mud-ink/30 to-transparent flex items-end p-8 md:p-16">
@@ -1054,7 +1069,8 @@ const About = () => {
               <img 
                 src={CHEF_IMAGE} 
                 alt="Chef at work" 
-                className="w-full h-full object-cover scale-110 hover:scale-100 transition-transform duration-1000"
+                className="w-full h-full object-cover scale-110 hover:scale-100 transition-transform duration-500"
+                loading="lazy"
                 referrerPolicy="no-referrer"
               />
             </div>
@@ -2068,13 +2084,13 @@ const BackToTop = () => {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    const toggleVisibility = () => {
+    const toggleVisibility = throttle(() => {
       if (window.pageYOffset > 300) {
         setIsVisible(true);
       } else {
         setIsVisible(false);
       }
-    };
+    }, 200);
     window.addEventListener('scroll', toggleVisibility);
     return () => window.removeEventListener('scroll', toggleVisibility);
   }, []);
